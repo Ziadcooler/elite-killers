@@ -23,12 +23,22 @@ screenHeight = love.graphics.getHeight()
 
 currentVolume = 0.5
 
-currentKills = 0 
-
-startTime = 0
-currentTime = 0 
+currentLevel = 0
+currentKills = 0
+currentTime = 0
+finalTime = 0
+finalKills = 0
+highKills = 0
+previousKills = 0
 
 love.audio.setVolume(currentVolume)
+
+function formatTime(seconds)
+    local mins = math.floor(seconds / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%d:%02d", mins, secs)
+end
+
 
 function love.load() 
     gameState = "startMenu"
@@ -54,6 +64,7 @@ function love.load()
     }
 
     bullets = {}
+    bullets.size = 6
     bullets.dmg = 40
     bulletSpeed = 800
     bulletCooldown = 0.5
@@ -61,9 +72,24 @@ function love.load()
 
     enemies = {}
     enemies.cdmg = 20
+    enemies.hp = 40
     enemySpeed = 300
     enemySpawnRate = 1 -- seconds
     enemySpawnTimer = 0 
+
+    enemies1Active = true 
+    enemies2Active = false
+
+    powerUp = {
+        speedBoost = {name = "Speed Buff", effect = "Buffs your walk speed by 20%", active = false, applied = false},
+        bigBullets = {name = "Kicking Ass", effect = "Increases your bullet's size by 10% and damage by 40%", active = false, applied = false},
+        bulletSpeedBoost = {name = "Shot of Light", effect = "Buffs your bullet speed by 50%", active = false, applied = false},
+        bulletReloadBoost = {name = "Take Fire", effect = "Reduces reload time by 40%", active = false, applied = false},
+        maxHPBoost = {name = "Tank", effect = "+50 Max Health", active = false, applied = false},
+        shotRegensHP = {name = "Life Steal", effect = "Killing enemies regens 5 HP", active = false, applied = false},
+    }
+    selectedPowerUps = {}
+    powerSelectionIndex = 1
 
     player = {}
     player.width = 60
@@ -71,7 +97,8 @@ function love.load()
     player.collider = world:newBSGRectangleCollider(400, 400, player.width, player.height, 5)
     player.collider:setFixedRotation(true)
     player.speed = 550
-    player.hp = 100
+    player.HP = 100
+    player.maxHP = 100 
     playerHurtCooldown = 1 -- seconds
     playerHurtTimer = 0 
 
@@ -110,6 +137,7 @@ end
 
 function resetGame()
     bullets = {}
+    bullets.size = 6
     bullets.dmg = 40
     bulletSpeed = 800
     bulletCooldown = 0.5
@@ -117,22 +145,88 @@ function resetGame()
 
     enemies = {}
     enemies.cdmg = 20
+    enemies.hp = 40
     enemySpeed = 300
     enemySpawnRate = 1 -- seconds
     enemySpawnTimer = 0 
 
-    player.speed = 550
-    player.hp = 100
-    playerHurtCooldown = 2 -- seconds
-    playerHurtTimer = 0 
+    enemies1Active = true 
+    enemies2Active = false
 
-    player.anim = player.animations.left
+    powerUp = {
+        speedBoost = {name = "Speed Buff", effect = "Buffs your walk speed by 20%", active = false, applied = false},
+        bigBullets = {name = "Kicking Ass", effect = "Increases your bullet's size by 10% and damage by 40%", active = false, applied = false},
+        bulletSpeedBoost = {name = "Shot of Light", effect = "Buffs your bullet speed by 50%", active = false, applied = false},
+        bulletReloadBoost = {name = "Take Fire", effect = "Reduces reload time by 40%", active = false, applied = false},
+        maxHPBoost = {name = "Tank", effect = "+50 Max Health", active = false, applied = false},
+        shotRegensHP = {name = "Life Steal", effect = "Killing enemies regens 5 HP", active = false, applied = false},
+    }
+    selectedPowerUps = {}
+    powerSelectionIndex = 1
+
+    enemies1Active = true 
+    enemies2Active = false
+
+    player = {}
+player.width = 60
+player.height = 90
+player.collider = world:newBSGRectangleCollider(400, 400, player.width, player.height, 5)
+player.collider:setFixedRotation(true)
+player.speed = 550
+player.HP = 100
+player.maxHP = 100 
+playerHurtCooldown = 1
+playerHurtTimer = 0
+
+player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
+player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
+
+player.animations = {}
+player.animations.down = anim8.newAnimation(player.grid('1-4', 1), 0.2)
+player.animations.up = anim8.newAnimation(player.grid('1-4', 4), 0.2)
+player.animations.right = anim8.newAnimation(player.grid('1-4', 3), 0.2)
+player.animations.left = anim8.newAnimation(player.grid('1-4', 2), 0.2)
+
+player.anim = player.animations.left
+
+    currentLevel = 0
+    currentKills = 0
+    currentTime = 0
+    finalTime = 0
+    finalKills = 0
+    highKills = 0
+    previousKills = 0
 end 
+
+function chooseRandomPowerUps()
+    selectedPowerUps = {}
+
+    local pool = {}
+    for _, p in pairs(powerUp) do
+        if not p.active then
+            table.insert(pool, p)
+        end
+    end
+
+    if #pool >= 2 then
+        local i1 = math.random(1, #pool)
+        local power1 = table.remove(pool, i1)
+        local i2 = math.random(1, #pool)
+        local power2 = table.remove(pool, i2)
+
+        selectedPowerUps = { power1, power2 }
+    elseif #pool == 1 then
+        selectedPowerUps = { pool[1] }
+    end
+end
 
 function love.update(dt)
     if gameState ~= "game" then return end 
 
-    currentTime = os.time() - startTime 
+    currentTime = currentTime + dt
+    formattedTime = formatTime(currentTime)
+
+    if formattedTime == "1:00" then enemies2Active = true end 
 
     love.graphics.setColor(1,1,1,1)
 
@@ -185,6 +279,15 @@ function love.update(dt)
         
         -- Enemy logic
 
+        -- Switching between enemy states
+        if enemies2Active then
+            enemies1Active = false
+            enemies.cdmg = 40
+            enemies.hp = 70
+            enemySpeed = 400
+            enemies.color = "yellow"
+        end
+
         -- Spawning enemies
         enemySpawnTimer = enemySpawnTimer + dt
         if enemySpawnTimer >= enemySpawnRate then
@@ -196,7 +299,7 @@ function love.update(dt)
             table.insert(enemies, {
                 x = spawnX,
                 y = spawnY,
-                hp = 40
+                hp = enemies.hp,
             })
         end
 
@@ -218,12 +321,20 @@ function love.update(dt)
                 local e = enemies[j]
                 local dx = b.x - e.x
                 local dy = b.y - e.y
-                if dx * dx + dy * dy < 25^2 then -- collision radius
+                if powerUp.bigBullets.active then
+                    collisionRadi = (25^2 * 1.4)
+                else
+                    collisionRadi = 25^2
+                end
+                if dx * dx + dy * dy < collisionRadi then -- collision radius
                     table.remove(bullets, i)  
                     e.hp = e.hp - bullets.dmg
                     if e.hp <= 0 then
                         currentKills = currentKills + 1
                         table.remove(enemies, j)
+                        if powerUp.shotRegensHP.active then
+                            player.HP = player.HP + 5
+                        end
                     end
                 end
             end
@@ -240,22 +351,60 @@ function love.update(dt)
             local rectX = px - pw / 2
             local rectY = py - ph / 2
 
-            if checkRectCircleCollision(enemy.x, enemy.y, 100, rectX, rectY, pw, ph) then
+            if checkRectCircleCollision(enemy.x, enemy.y, 80, rectX, rectY, pw, ph) then
                 playerHurtTimer = playerHurtTimer + dt
                 if playerHurtTimer >= playerHurtCooldown then
-                    player.hp = player.hp - enemies.cdmg
+                    player.HP = player.HP - enemies.cdmg
                     playerHurtTimer = 0 
                 end
             end
         end 
         
 
-        -- Player HP logic
-        if player.hp <= 0 then
+        -- Player HP Depleted logic
+        if player.HP <= 0 then
             sounds.inGame:stop()
             sounds.death:play()
+            finalTime = formattedTime
+            finalKills = currentKills 
             gameState = "deathMenu"
         end
+        if player.HP >= player.maxHP then player.HP = player.maxHP end 
+            
+        -- Player power ups logic
+
+        -- Player kills 10 enemies then moves on to power up selection
+        if currentKills == previousKills + 15 then
+            previousKills = currentKills
+            currentLevel = currentLevel + 1
+            chooseRandomPowerUps()
+            gameState =  "powerUpSelection"
+        end
+
+        -- Power up effects
+        if powerUp.speedBoost.active and not powerUp.speedBoost.applied then
+            player.speed = player.speed * 1.2
+            powerUp.speedBoost.applied = true 
+        end
+        if powerUp.bigBullets.active and not powerUp.bigBullets.applied then
+            bullets.dmg = bullets.dmg * 1.4
+            bullets.size = bullets.size * 1.4
+            powerUp.bigBullets.applied = true 
+        end
+        if powerUp.bulletSpeedBoost.active and not powerUp.bulletSpeedBoost.applied then
+            bulletSpeed = bulletSpeed * 1.5
+            powerUp.bulletSpeedBoost.applied = true
+        end
+        if powerUp.bulletReloadBoost.active and not powerUp.bulletReloadBoost.applied then
+            bulletCooldown = bulletCooldown / 1.4
+            powerUp.bulletReloadBoost.applied = true 
+        end
+        if powerUp.maxHPBoost.active and not powerUp.maxHPBoost.applied then
+            player.HP = player.HP + 50 
+            player.maxHP = player.maxHP + 50
+            powerUp.maxHPBoost.applied = true 
+        end
+        -- Shot regens hp code is found in Enemy/Bullet collision
 
         -- Updating player pos and world
         
@@ -305,7 +454,24 @@ function love.draw()
         love.graphics.setColor(1,0,0)
         love.graphics.print("YOU DIED!", screenWidth / 2 - 400, screenHeight / 2 - 300, nil, scale)
         love.graphics.print("[ESC] to go back to start or [SPACE] to restart", screenWidth / 2 - 400, screenHeight / 2 - 200, nil, scale_mini)
+        love.graphics.print("Total Kills: ".. finalKills, screenWidth / 2 - 400, screenHeight / 2 - 150, nil, scale_mini)
+        love.graphics.print("Final Time: " .. finalTime, screenWidth / 2 - 400, screenHeight / 2 - 100, nil, scale_mini)
         love.graphics.setColor(1,1,1,1)
+    elseif gameState == "powerUpSelection" then
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("Select a Power Up", screenWidth / 2 - 350, screenHeight / 2 - 300, nil, scale)
+
+    for i, pow in ipairs(selectedPowerUps) do
+        local y = screenHeight / 2 + (i - 1) * 50
+        if i == powerSelectionIndex then
+            love.graphics.setColor(0, 1, 0)
+            love.graphics.print("Effect: " .. pow.effect, screenWidth / 2 - 400, screenHeight / 2 - 350, nil, scale_mini)
+            love.graphics.printf("> " .. pow.name, 0, y, screenWidth / 2, "center")
+        else
+            love.graphics.setColor(1, 1, 1)
+            love.graphics.printf(pow.name, 0, y, screenWidth / 2, "center")
+        end
+    end
     elseif gameState == "game" then
         cam:attach()
             if gameMap.layers["ground"] then gameMap:drawLayer(gameMap.layers["ground"]) end
@@ -317,20 +483,28 @@ function love.draw()
             if hitbox.isOn then
                 world:draw()
             end
+
+            -- bulletS
             for _, b in ipairs(bullets) do
                 love.graphics.setColor(1, 1, 0)
                 love.graphics.circle("fill", b.x, b.y, b.r)
             end
 
+            -- Enemies
             for _, e in ipairs(enemies) do
-                love.graphics.setColor(1, 0, 0)
+                if enemies1Active then
+                    love.graphics.setColor(1, 0, 0)
+                elseif enemies2Active then
+                    love.graphics.setColor(1, 1, 0)
+                end
                 love.graphics.circle("fill", e.x, e.y, 20)
             end
         cam:detach()
         love.graphics.setColor(1, 0, 0)
-        love.graphics.print("HP: " .. player.hp, screenWidth / 2 - 400, screenHeight / 2 + 400, nil, scale_mini)
-        love.graphics.print("Kills: " .. currentKills, screenWidth / 2 - 400, screenHeight / 2 - 400, nil, scale_mini)
-        love.graphics.print("Time: " .. currentTime, screenWidth / 2 - 400, screenWidth / 2 - 300, nil, scale_mini)
+        love.graphics.print("HP: " .. player.HP .. "/" .. player.maxHP, screenWidth / 2 - 700, screenHeight / 2 + 400, nil, scale_mini)
+        love.graphics.print("Kills: " .. currentKills, screenWidth / 2 - 700, screenHeight / 2 - 475, nil, scale_mini)
+        love.graphics.print("Time: " .. formattedTime, screenWidth / 2 - 700, screenHeight / 2 - 425, nil, scale_mini)
+        love.graphics.print("Level: " .. currentLevel, screenWidth / 2 - 700, screenHeight / 2 - 375, nil, scale_mini)
         love.graphics.setColor(1,1,1)
     end
 end 
@@ -351,7 +525,7 @@ function love.mousepressed(x, y, btn)
                 y = py,
                 dx = math.cos(angle),
                 dy = math.sin(angle),
-                r = 6,
+                r = bullets.size,
                 angle = angle
             })
             bulletTimer = bulletCooldown
@@ -362,7 +536,6 @@ end
 function love.keypressed(key)
     if gameState == "startMenu" then
         if key == "space" or key == "return" then
-            startTime = os.time()
             gameState = "game"
         elseif key == "s" then
             previousGameState = gameState
@@ -410,7 +583,7 @@ function love.keypressed(key)
                 y = py,
                 dx = math.cos(angle),
                 dy = math.sin(angle),
-                r = 6,
+                r = bullets.size,
                 angle = angle
             })
             bulletTimer = bulletCooldown
@@ -422,6 +595,24 @@ function love.keypressed(key)
         elseif key == "escape" or key == "p" or key == "b" then
             gameState = "game"
         end
+    elseif gameState == "powerUpSelection" then
+    if key == "up" or key == "w" then
+        powerSelectionIndex = powerSelectionIndex - 1
+        if powerSelectionIndex < 1 then
+            powerSelectionIndex = #selectedPowerUps
+        end
+    elseif key == "down" or key == "s" then
+        powerSelectionIndex = powerSelectionIndex + 1
+        if powerSelectionIndex > #selectedPowerUps then
+            powerSelectionIndex = 1
+        end
+    elseif key == "return" or key == "space" then
+        -- Activate the selected power-up
+        local selected = selectedPowerUps[powerSelectionIndex]
+        selected.active = true
+        gameState = "game"
+    end
+
     elseif gameState == "deathMenu" then
         if key == "return" or key == "space" then
             resetGame()
