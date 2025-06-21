@@ -87,9 +87,27 @@ function love.load()
         bulletReloadBoost = {name = "Take Fire", effect = "Reduces reload time by 40%", active = false, applied = false},
         maxHPBoost = {name = "Tank", effect = "+50 Max Health", active = false, applied = false},
         shotRegensHP = {name = "Life Steal", effect = "Killing enemies regens 5 HP", active = false, applied = false},
+        explosiveBullets = {name = "Explosive Bullets", effect = "Bullets Explode on Hit", active = false, applied = false},
+        scytheSummon = {name = "Helping Hand", effect = "Summon a friend around you to deal contact damage to enemies", active = false, applied = false},
+        explosiveBulletsUpgrade = {name = "Nuclear Bullets", effect = "Significantly upgrades explosive bullets", active = false, applied = false},
+        scytheSummonUpgrade = {name = "Right Hand Man", effect = "Significantly upgrades Helping Hand", active = false, applied = false}
     }
     selectedPowerUps = {}
     powerSelectionIndex = 1
+
+    scythe = {
+        x = 0,
+        y = 0,
+        size = 30,   
+        dmg = 20,    
+        angle = 0,
+        radius = 30,
+        speed = 2 * math.pi
+    }
+
+
+    enemies1Active = true 
+    enemies2Active = false
 
     player = {}
     player.width = 60
@@ -99,8 +117,8 @@ function love.load()
     player.speed = 550
     player.HP = 100
     player.maxHP = 100 
-    playerHurtCooldown = 1 -- seconds
-    playerHurtTimer = 0 
+    playerHurtCooldown = 1
+    playerHurtTimer = 0
 
     player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
     player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
@@ -160,34 +178,49 @@ function resetGame()
         bulletReloadBoost = {name = "Take Fire", effect = "Reduces reload time by 40%", active = false, applied = false},
         maxHPBoost = {name = "Tank", effect = "+50 Max Health", active = false, applied = false},
         shotRegensHP = {name = "Life Steal", effect = "Killing enemies regens 5 HP", active = false, applied = false},
+        explosiveBullets = {name = "Explosive Bullets", effect = "Bullets Explode on Hit", active = false, applied = false},
+        scytheSummon = {name = "Helping Hand", effect = "Summon a friend around you to deal contact damage to enemies", active = false, applied = false},
+        explosiveBulletsUpgrade = {name = "Nuclear Bullets", effect = "Significantly upgrades explosive bullets", active = false, applied = false},
+        scytheSummonUpgrade = {name = "Right Hand Man", effect = "Significantly upgrades Helping Hand", active = false, applied = false}
     }
     selectedPowerUps = {}
     powerSelectionIndex = 1
+
+    scythe = {
+        x = 0,
+        y = 0,
+        size = 30,   
+        dmg = 20,    
+        angle = 0,
+        radius = 30,
+        speed = 2 * math.pi
+    }
+
 
     enemies1Active = true 
     enemies2Active = false
 
     player = {}
-player.width = 60
-player.height = 90
-player.collider = world:newBSGRectangleCollider(400, 400, player.width, player.height, 5)
-player.collider:setFixedRotation(true)
-player.speed = 550
-player.HP = 100
-player.maxHP = 100 
-playerHurtCooldown = 1
-playerHurtTimer = 0
+    player.width = 60
+    player.height = 90
+    player.collider = world:newBSGRectangleCollider(400, 400, player.width, player.height, 5)
+    player.collider:setFixedRotation(true)
+    player.speed = 550
+    player.HP = 100
+    player.maxHP = 100 
+    playerHurtCooldown = 1
+    playerHurtTimer = 0
 
-player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
-player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
+    player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
+    player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
 
-player.animations = {}
-player.animations.down = anim8.newAnimation(player.grid('1-4', 1), 0.2)
-player.animations.up = anim8.newAnimation(player.grid('1-4', 4), 0.2)
-player.animations.right = anim8.newAnimation(player.grid('1-4', 3), 0.2)
-player.animations.left = anim8.newAnimation(player.grid('1-4', 2), 0.2)
+    player.animations = {}
+    player.animations.down = anim8.newAnimation(player.grid('1-4', 1), 0.2)
+    player.animations.up = anim8.newAnimation(player.grid('1-4', 4), 0.2)
+    player.animations.right = anim8.newAnimation(player.grid('1-4', 3), 0.2)
+    player.animations.left = anim8.newAnimation(player.grid('1-4', 2), 0.2)
 
-player.anim = player.animations.left
+    player.anim = player.animations.left
 
     currentLevel = 0
     currentKills = 0
@@ -202,23 +235,42 @@ function chooseRandomPowerUps()
     selectedPowerUps = {}
 
     local pool = {}
-    for _, p in pairs(powerUp) do
-        if not p.active then
+
+    for name, p in pairs(powerUp) do
+        -- Only include regular powerups if not active
+        if not p.active and name ~= "Right Hand Man" and name ~= "Nuclear Bullets" then
+            table.insert(pool, p)
+        end
+
+        -- Allow upgrades ONLY if base powerup is active
+        if name == "Nuclear Bullets" and powerUp.explosiveBullets.active and not p.active then
+            table.insert(pool, p)
+        end
+        if name == "Right Hand Man" and powerUp.scytheSummon.active and not p.active then
             table.insert(pool, p)
         end
     end
 
-    if #pool >= 2 then
+    -- Select up to 3 powerups
+    if #pool >= 3 then
         local i1 = math.random(1, #pool)
         local power1 = table.remove(pool, i1)
         local i2 = math.random(1, #pool)
         local power2 = table.remove(pool, i2)
-
+        local i3 = math.random(1, #pool)
+        local power3 = table.remove(pool, i3)
+        selectedPowerUps = { power1, power2, power3 }
+    elseif #pool == 2 then
+        local i1 = math.random(1, #pool)
+        local power1 = table.remove(pool, i1)
+        local power2 = table.remove(pool, 1)
         selectedPowerUps = { power1, power2 }
     elseif #pool == 1 then
         selectedPowerUps = { pool[1] }
     end
 end
+
+
 
 function love.update(dt)
     if gameState ~= "game" then return end 
@@ -315,24 +367,73 @@ function love.update(dt)
         end
 
         -- Enemy and bullet collision
-        for i = #bullets, 1, -1 do
-            local b = bullets[i]
-            for j = #enemies, 1, -1 do
-                local e = enemies[j]
-                local dx = b.x - e.x
-                local dy = b.y - e.y
-                if powerUp.bigBullets.active then
-                    collisionRadi = (25^2 * 1.4)
-                else
-                    collisionRadi = 25^2
+for i = #bullets, 1, -1 do
+    local b = bullets[i]
+    for j = #enemies, 1, -1 do
+        local e = enemies[j]
+        local dx = b.x - e.x
+        local dy = b.y - e.y
+        local collisionRadi = powerUp.bigBullets.active and (25^2 * 1.4) or 25^2
+
+        if dx * dx + dy * dy < collisionRadi then
+            -- Remove bullet immediately
+            table.remove(bullets, i)
+
+            -- Deal regular damage
+            e.hp = e.hp - bullets.dmg
+
+            -- 💥 Explosive bullet effect BEFORE removing enemy e
+            if powerUp.explosiveBullets.active then
+                local explosionRadius = 150
+                for k = #enemies, 1, -1 do
+                    local other = enemies[k]
+                    -- Make sure 'other' isn't nil and not the same enemy (e)
+                    if other ~= e and other ~= nil then
+                        local dx2 = b.x - other.x
+                        local dy2 = b.y - other.y
+                        local distSq = dx2 * dx2 + dy2 * dy2
+                        if distSq < explosionRadius * explosionRadius then
+                            other.hp = other.hp - (bullets.dmg / 2)
+                            if other.hp <= 0 then
+                                table.remove(enemies, k)
+                                currentKills = currentKills + 1
+                                if powerUp.shotRegensHP.active then
+                                    player.HP = player.HP + 5
+                                end
+                            end
+                        end
+                    end
                 end
-                if dx * dx + dy * dy < collisionRadi then -- collision radius
-                    table.remove(bullets, i)  
-                    e.hp = e.hp - bullets.dmg
+            end
+
+            -- Only now remove the original hit enemy
+            if e.hp <= 0 then
+                table.remove(enemies, j)
+                currentKills = currentKills + 1
+                if powerUp.shotRegensHP.active then
+                    player.HP = player.HP + 5
+                end
+            end
+
+            break -- exit inner loop after bullet hits
+        end
+    end
+end
+
+
+        -- Enemy/Scythe Collision
+        if powerUp.scytheSummon.active then
+            for i = #enemies, 1, -1 do
+                local e = enemies[i]
+                local dx = scythe.x - e.x
+                local dy = scythe.y - e.y
+                local distSq = dx * dx + dy * dy
+                if distSq <(scythe.size + 25)^2 then
+                    e.hp = e.hp - scythe.dmg
                     if e.hp <= 0 then
                         currentKills = currentKills + 1
-                        table.remove(enemies, j)
-                        if powerUp.shotRegensHP.active then
+                        table.remove(enemies, i)
+                        if powerUp.shotRegensHP.actve then
                             player.HP = player.HP + 5
                         end
                     end
@@ -404,7 +505,18 @@ function love.update(dt)
             player.maxHP = player.maxHP + 50
             powerUp.maxHPBoost.applied = true 
         end
+        if powerUp.scytheSummon.active then
+            scythe.angle = (scythe.angle + scythe.speed * dt) % (2 * math.pi)
+            
+            -- Revolve around the player center
+            scythe.x = player.x + math.cos(scythe.angle) * scythe.radius
+            scythe.y = player.y + math.sin(scythe.angle) * scythe.radius
+        end
+
+
         -- Shot regens hp code is found in Enemy/Bullet collision
+        -- Explosive bullet code found in Enemy/Bullet Collision
+
 
         -- Updating player pos and world
         
@@ -499,6 +611,10 @@ function love.draw()
                 end
                 love.graphics.circle("fill", e.x, e.y, 20)
             end
+        if powerUp.scytheSummon.active then
+            love.graphics.setColor(0, 0, 1)
+            love.graphics.circle("fill", scythe.x, scythe.y, scythe.size)
+        end
         cam:detach()
         love.graphics.setColor(1, 0, 0)
         love.graphics.print("HP: " .. player.HP .. "/" .. player.maxHP, screenWidth / 2 - 700, screenHeight / 2 + 400, nil, scale_mini)
