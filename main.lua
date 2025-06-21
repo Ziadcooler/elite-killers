@@ -31,12 +31,39 @@ finalKills = 0
 highKills = 0
 previousKills = 0
 
+powerUpJustActivated = {}
+
 love.audio.setVolume(currentVolume)
 
 function formatTime(seconds)
     local mins = math.floor(seconds / 60)
     local secs = math.floor(seconds % 60)
     return string.format("%d:%02d", mins, secs)
+end
+
+function saveHighScore()
+    if not love.filesystem.getInfo("highKills.dat") then
+        love.filesystem.write("highKills.dat", tostring(highKills))
+    else
+        love.filesystem.write("highKills.dat", tostring(highKills))
+    end
+end
+
+function loadHighScore()
+    if love.filesystem.getInfo("highKills.dat") then
+        local contents = love.filesystem.read("highKills.dat")
+        highKills = tonumber(contents) or 0
+    else
+        highKills = currentKills or 0
+        love.filesystem.write("highKills.dat", tostring(highKills))
+    end
+end
+
+function resetHighScore()
+    if love.filesystem.getInfo("highKills.dat") then
+        love.filesystem.remove("highKills.dat")
+    end
+    highKills = 0 
 end
 
 
@@ -48,11 +75,14 @@ function love.load()
     math.randomseed(os.time())
     math.random(); math.random(); math.random()
 
+    loadHighScore()
+
     sounds = {
         mainTheme = love.audio.newSource("sounds/maintheme.wav", "stream"),
-        inGame = love.audio.newSource("sounds/background.wav", "stream"),
+        inGame = love.audio.newSource("sounds/background.mp3", "stream"),
         death = love.audio.newSource("sounds/deathsfx.wav", "static"),
-        gunshot = love.audio.newSource("sounds/gunshot.wav", "static")
+        gunshot = love.audio.newSource("sounds/gunshot.wav", "static"),
+        victory = love.audio.newSource("sounds/victory.mp3", "stream")
     }
 
     sounds.mainTheme:play()
@@ -79,6 +109,7 @@ function love.load()
 
     enemies1Active = true 
     enemies2Active = false
+    enemies3Active = false 
 
     powerUp = {
         speedBoost = {name = "Speed Buff", effect = "Buffs your walk speed by 20%", active = false, applied = false},
@@ -105,10 +136,6 @@ function love.load()
         speed = 2 * math.pi
     }
 
-
-    enemies1Active = true 
-    enemies2Active = false
-
     player = {}
     player.width = 60
     player.height = 90
@@ -120,6 +147,9 @@ function love.load()
     playerHurtCooldown = 1
     playerHurtTimer = 0
 
+    scytheHurtCooldown = 1
+    scytheHurtTimer = 0 
+
     player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
     player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
 
@@ -130,6 +160,13 @@ function love.load()
     player.animations.left = anim8.newAnimation(player.grid('1-4', 2), 0.2)
 
     player.anim = player.animations.left
+
+    currentLevel = 0
+    currentKills = 0
+    currentTime = 0
+    finalTime = 0
+    finalKills = 0
+    previousKills = 0
 
     walls = {}
     if gameMap.layers["walls"] then 
@@ -170,6 +207,7 @@ function resetGame()
 
     enemies1Active = true 
     enemies2Active = false
+    enemies3Active = false 
 
     powerUp = {
         speedBoost = {name = "Speed Buff", effect = "Buffs your walk speed by 20%", active = false, applied = false},
@@ -185,6 +223,8 @@ function resetGame()
     }
     selectedPowerUps = {}
     powerSelectionIndex = 1
+
+    powerUpJustActivated = {}
 
     scythe = {
         x = 0,
@@ -211,6 +251,9 @@ function resetGame()
     playerHurtCooldown = 1
     playerHurtTimer = 0
 
+    scytheHurtCooldown = 1
+    scytheHurtTimer = 0 
+
     player.spriteSheet = love.graphics.newImage('sprites/player-sheet.png')
     player.grid = anim8.newGrid(12, 18, player.spriteSheet:getWidth(), player.spriteSheet:getHeight())
 
@@ -233,43 +276,31 @@ end
 
 function chooseRandomPowerUps()
     selectedPowerUps = {}
-
     local pool = {}
 
     for name, p in pairs(powerUp) do
-        -- Only include regular powerups if not active
-        if not p.active and name ~= "Right Hand Man" and name ~= "Nuclear Bullets" then
-            table.insert(pool, p)
-        end
-
-        -- Allow upgrades ONLY if base powerup is active
-        if name == "Nuclear Bullets" and powerUp.explosiveBullets.active and not p.active then
-            table.insert(pool, p)
-        end
-        if name == "Right Hand Man" and powerUp.scytheSummon.active and not p.active then
+        local isUpgrade = name == "Right Hand Man" or name == "Nuclear Bullets"
+        if not p.active and not isUpgrade then
             table.insert(pool, p)
         end
     end
 
-    -- Select up to 3 powerups
-    if #pool >= 3 then
-        local i1 = math.random(1, #pool)
-        local power1 = table.remove(pool, i1)
-        local i2 = math.random(1, #pool)
-        local power2 = table.remove(pool, i2)
-        local i3 = math.random(1, #pool)
-        local power3 = table.remove(pool, i3)
-        selectedPowerUps = { power1, power2, power3 }
-    elseif #pool == 2 then
-        local i1 = math.random(1, #pool)
-        local power1 = table.remove(pool, i1)
-        local power2 = table.remove(pool, 1)
-        selectedPowerUps = { power1, power2 }
-    elseif #pool == 1 then
-        selectedPowerUps = { pool[1] }
+    -- Only add upgrades if the base version was active in a *previous* round
+    if powerUp.explosiveBullets.active and not powerUpJustActivated["explosiveBullets"] and not powerUp.explosiveBulletsUpgrade.active then
+        table.insert(pool, powerUp.explosiveBulletsUpgrade)
     end
+    if powerUp.scytheSummon.active and not powerUpJustActivated["scytheSummon"] and not powerUp.scytheSummonUpgrade.active then
+        table.insert(pool, powerUp.scytheSummonUpgrade)
+    end
+
+    while #selectedPowerUps < 3 and #pool > 0 do
+        local i = math.random(1, #pool)
+        table.insert(selectedPowerUps, table.remove(pool, i))
+    end
+
+    -- Reset this table so we don’t block upgrades forever
+    powerUpJustActivated = {}
 end
-
 
 
 function love.update(dt)
@@ -279,6 +310,19 @@ function love.update(dt)
     formattedTime = formatTime(currentTime)
 
     if formattedTime == "1:00" then enemies2Active = true end 
+
+    if formattedTime == "2:00" then enemies3Active = true end 
+
+    if formattedTime == "3:00" then 
+        sounds.inGame:stop()
+        sounds.victory:play()
+        gameState = "victoryMenu"
+    end  
+
+    -- High score logic
+    if currentKills > highKills then
+        highKills = currentKills
+    end
 
     love.graphics.setColor(1,1,1,1)
 
@@ -337,7 +381,13 @@ function love.update(dt)
             enemies.cdmg = 40
             enemies.hp = 70
             enemySpeed = 400
-            enemies.color = "yellow"
+        end
+
+        if enemies3Active then
+            enemies2Active = false
+            enemies.cdmg = 70
+            enemies.hp = 100
+            enemySpeed = 600
         end
 
         -- Spawning enemies
@@ -393,7 +443,12 @@ for i = #bullets, 1, -1 do
                         local dy2 = b.y - other.y
                         local distSq = dx2 * dx2 + dy2 * dy2
                         if distSq < explosionRadius * explosionRadius then
-                            other.hp = other.hp - (bullets.dmg / 2)
+                            local explosionDmg = (bullets.dmg / 2)
+                            if powerUp.explosiveBulletsUpgrade.active and not powerUp.explosiveBulletsUpgrade.applied then
+                                explosionDmg = explosionDmg * 1.5
+                                powerUp.explosiveBulletsUpgrade.applied = true 
+                            end
+                            other.hp = other.hp - explosionDmg
                             if other.hp <= 0 then
                                 table.remove(enemies, k)
                                 currentKills = currentKills + 1
@@ -422,7 +477,8 @@ end
 
 
         -- Enemy/Scythe Collision
-        if powerUp.scytheSummon.active then
+        scytheHurtTimer = scytheHurtTimer + dt 
+        if powerUp.scytheSummon.active and scytheHurtTimer >= 0 then
             for i = #enemies, 1, -1 do
                 local e = enemies[i]
                 local dx = scythe.x - e.x
@@ -430,6 +486,7 @@ end
                 local distSq = dx * dx + dy * dy
                 if distSq <(scythe.size + 25)^2 then
                     e.hp = e.hp - scythe.dmg
+                    scytheHurtTimer = scytheHurtCooldown 
                     if e.hp <= 0 then
                         currentKills = currentKills + 1
                         table.remove(enemies, i)
@@ -464,6 +521,7 @@ end
 
         -- Player HP Depleted logic
         if player.HP <= 0 then
+            saveHighScore()
             sounds.inGame:stop()
             sounds.death:play()
             finalTime = formattedTime
@@ -506,11 +564,20 @@ end
             powerUp.maxHPBoost.applied = true 
         end
         if powerUp.scytheSummon.active then
-            scythe.angle = (scythe.angle + scythe.speed * dt) % (2 * math.pi)
+            if powerUp.scytheSummonUpgrade.active then
+                scythe.angle = (scythe.angle + scythe.speed * dt) % (2 * math.pi)
+            else
+                scythe.angle = (scythe.angle + scythe.speed * dt) % (2 * math.pi)
+            end
             
             -- Revolve around the player center
-            scythe.x = player.x + math.cos(scythe.angle) * scythe.radius
+            scythe.x = (player.x) + math.cos(scythe.angle) * scythe.radius
             scythe.y = player.y + math.sin(scythe.angle) * scythe.radius
+        end
+        if powerUp.scytheSummonUpgrade.active and not powerUp.scytheSummonUpgrade.applied then
+            scythe.speed = scythe.speed * 1.6
+            scythe.dmg = scythe.dmg * 1.6
+            powerUp.scytheSummonUpgrade.applied = true 
         end
 
 
@@ -568,6 +635,16 @@ function love.draw()
         love.graphics.print("[ESC] to go back to start or [SPACE] to restart", screenWidth / 2 - 400, screenHeight / 2 - 200, nil, scale_mini)
         love.graphics.print("Total Kills: ".. finalKills, screenWidth / 2 - 400, screenHeight / 2 - 150, nil, scale_mini)
         love.graphics.print("Final Time: " .. finalTime, screenWidth / 2 - 400, screenHeight / 2 - 100, nil, scale_mini)
+        love.graphics.print("High score: " .. highKills, screenWidth / 2 - 400, screenHeight /2 - 50, nil, scale_mini)
+        love.graphics.setColor(1,1,1,1)
+    elseif gameState == "victoryMenu" then
+        love.graphics.setBackgroundColor(0,0,0)
+        love.graphics.setColor(0,1,0)
+        love.graphics.print("YOU WON!", screenWidth / 2 - 400, screenHeight / 2 - 300, nil, scale)
+        love.graphics.print("[ESC] to go back to start or [SPACE] to restart", screenWidth / 2 - 400, screenHeight / 2 - 200, nil, scale_mini)
+        love.graphics.print("Total Kills: ".. finalKills, screenWidth / 2 - 400, screenHeight / 2 - 150, nil, scale_mini)
+        love.graphics.print("Final Time: " .. finalTime, screenWidth / 2 - 400, screenHeight / 2 - 100, nil, scale_mini)
+        love.graphics.print("High score: " .. highKills, screenWidth / 2 - 400, screenHeight /2 - 50, nil, scale_mini)
         love.graphics.setColor(1,1,1,1)
     elseif gameState == "powerUpSelection" then
     love.graphics.setColor(1, 1, 1)
@@ -585,6 +662,7 @@ function love.draw()
         end
     end
     elseif gameState == "game" then
+        love.graphics.setBackgroundColor(0.2, 0.8, 0.5)
         cam:attach()
             if gameMap.layers["ground"] then gameMap:drawLayer(gameMap.layers["ground"]) end
             if gameMap.layers["ground2"] then gameMap:drawLayer(gameMap.layers["ground2"]) end
@@ -605,9 +683,11 @@ function love.draw()
             -- Enemies
             for _, e in ipairs(enemies) do
                 if enemies1Active then
-                    love.graphics.setColor(1, 0, 0)
+                    love.graphics.setColor(0, 1, 0)
                 elseif enemies2Active then
                     love.graphics.setColor(1, 1, 0)
+                elseif enemies3Active then
+                    love.graphics.setColor(1, 0, 0)
                 end
                 love.graphics.circle("fill", e.x, e.y, 20)
             end
@@ -619,8 +699,9 @@ function love.draw()
         love.graphics.setColor(1, 0, 0)
         love.graphics.print("HP: " .. player.HP .. "/" .. player.maxHP, screenWidth / 2 - 700, screenHeight / 2 + 400, nil, scale_mini)
         love.graphics.print("Kills: " .. currentKills, screenWidth / 2 - 700, screenHeight / 2 - 475, nil, scale_mini)
-        love.graphics.print("Time: " .. formattedTime, screenWidth / 2 - 700, screenHeight / 2 - 425, nil, scale_mini)
-        love.graphics.print("Level: " .. currentLevel, screenWidth / 2 - 700, screenHeight / 2 - 375, nil, scale_mini)
+        love.graphics.print("Highest Kills: " .. highKills, screenWidth / 2 - 700, screenHeight / 2 - 425, nil, scale_mini)
+        love.graphics.print("Time: " .. formattedTime, screenWidth / 2 - 700, screenHeight / 2 - 375, nil, scale_mini)
+        love.graphics.print("Level: " .. currentLevel, screenWidth / 2 - 700, screenHeight / 2 - 325, nil, scale_mini)
         love.graphics.setColor(1,1,1)
     end
 end 
@@ -725,16 +806,35 @@ function love.keypressed(key)
     elseif key == "return" or key == "space" then
         -- Activate the selected power-up
         local selected = selectedPowerUps[powerSelectionIndex]
-        selected.active = true
+
+        -- Find and activate the matching powerUp from the main table
+        for name, p in pairs(powerUp) do
+            if p == selected then
+                powerUp[name].active = true
+                powerUpJustActivated[name] = true
+                break
+            end
+        end
+
         gameState = "game"
     end
-
     elseif gameState == "deathMenu" then
         if key == "return" or key == "space" then
             resetGame()
             gameState = "game"
         elseif key == "escape" or key == "b" then
             resetGame()
+            sounds.mainTheme:play()
+            gameState = "startMenu"
+        end
+    elseif gameState == "victoryMenu" then
+        if key == "return" or key == "space" then
+            resetGame()
+            sounds.victory:stop()
+            gameState = "game"
+        elseif key == "escape" or key == "b" then
+            resetGame()
+            sounds.victory:stop()
             sounds.mainTheme:play()
             gameState = "startMenu"
         end
